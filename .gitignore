@@ -1,2 +1,2 @@
-*.log
-!important.log
+*.vscode
+!important.vscode
