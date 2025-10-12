@@ -1,88 +1,85 @@
-# ============================================
-# PowerShell Deployment Script (Safe Version)
-# For multiple React/TypeScript apps -> GitHub Pages (/docs)
-# ============================================
+# =========================================
+#  Auto GitHub Pages Multi-App Deployer
+# =========================================
+# Works for multiple React (TSX) apps in subfolders
+# Example structure:
+# My-Projects/
+# ├─ TaskFlow_Web/
+# ├─ ShopHub_Web/
+# ├─ docs/
+# └─ deploy.ps1
 
-Write-Host ""
-Write-Host "=== Starting GitHub Pages deployment ===" -ForegroundColor Cyan
+$ErrorActionPreference = "Stop"
 
-# ---- Configuration ----
-$apps = @(
-    @{ Name = "E-commerce_web_ShopHub"; Folder = "E-commerce_web_ShopHub" },
-    @{ Name = "TaskFlow_Web"; Folder = "TaskFlow_Web" }
-)
+# GitHub username and repo name (edit only if needed)
+$githubUser = "PrinceSanchela"
+$repoName = "My-Projects"
 
-$docsPath = Join-Path $PSScriptRoot "docs"
+# List of your apps (folder names)
+$apps = @("TaskFlow_Web", "E-commerce_web_ShopHub")
 
-# ---- Ensure docs/ exists ----
-if (!(Test-Path $docsPath)) {
-    New-Item -ItemType Directory -Path $docsPath | Out-Null
+Write-Host " Starting deployment for $repoName..."
+
+# Ensure docs folder exists
+if (-not (Test-Path ".\docs")) {
+    New-Item -ItemType Directory -Path ".\docs" | Out-Null
 }
 
-# ---- Loop through each app ----
 foreach ($app in $apps) {
-    $name = $app.Name
-    $folder = $app.Folder
-    $appPath = Join-Path $PSScriptRoot $folder
-    $targetPath = Join-Path $docsPath $name
+    Write-Host "`n Building $app..."
 
-    Write-Host ""
-    Write-Host "Building $name..." -ForegroundColor Yellow
+    $appPath = ".\$app"
+    $buildPath = "$appPath\build"
+    $targetPath = ".\docs\$app"
+    $packageJson = "$appPath\package.json"
 
-    if (!(Test-Path $appPath)) {
-        Write-Host "ERROR: Folder not found: $appPath" -ForegroundColor Red
-        continue
-    }
-
-    Set-Location $appPath
-
-    if (!(Test-Path "package.json")) {
-        Write-Host "ERROR: package.json not found in $folder! Skipping..." -ForegroundColor Red
-        continue
-    }
-
-    # ---- Install and build ----
-    npm install
-    npm run build
-
-    # ---- Detect build folder ----
-    $buildPath = ""
-    if (Test-Path (Join-Path $appPath "build")) {
-        $buildPath = Join-Path $appPath "build"
-    }
-    elseif (Test-Path (Join-Path $appPath "dist")) {
-        $buildPath = Join-Path $appPath "dist"
+    # 1️ Update homepage field in package.json
+    if (Test-Path $packageJson) {
+        $json = Get-Content $packageJson | Out-String | ConvertFrom-Json
+        $newHomepage = "https://$githubUser.github.io/$repoName/$app"
+        $json.homepage = $newHomepage
+        $json | ConvertTo-Json -Depth 100 | Set-Content $packageJson -Encoding UTF8
+        Write-Host "   Set homepage: $newHomepage"
     }
     else {
-        Write-Host "ERROR: No 'build' or 'dist' folder found in $folder! Skipping..." -ForegroundColor Red
-        continue
+        Write-Host "   Skipped homepage update (no package.json found)."
     }
 
-    # ---- Clean old build ----
-    Write-Host "Cleaning old build in $targetPath..." -ForegroundColor Gray
-    Remove-Item -Recurse -Force $targetPath -ErrorAction Ignore
-    New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+    # 2️ Build the app
+    if (Test-Path $appPath) {
+        Set-Location $appPath
+        npm run build
+        Set-Location ..
 
-    # ---- Copy new build ----
-    Write-Host "Copying new build files..." -ForegroundColor Gray
-    Copy-Item -Path "$buildPath\*" -Destination $targetPath -Recurse -Force
+        # 3️ Create target docs subfolder
+        if (-not (Test-Path $targetPath)) {
+            New-Item -ItemType Directory -Path $targetPath | Out-Null
+        }
 
-    Write-Host "SUCCESS: $name build copied to docs/$name" -ForegroundColor Green
+        # 4️ Copy build files into docs/<app>/
+        if (Test-Path $buildPath) {
+            Remove-Item -Recurse -Force $targetPath -ErrorAction Ignore
+            New-Item -ItemType Directory -Path $targetPath | Out-Null
+            Copy-Item -Path "$buildPath\*" -Destination $targetPath -Recurse
+            Write-Host "   Copied build to docs/$app"
+        }
+        else {
+            Write-Host "   Build folder not found for $app!"
+        }
+    }
+    else {
+        Write-Host "   App folder $app not found!"
+    }
 }
 
-# ---- Return to repo root ----
-Set-Location $PSScriptRoot
+Write-Host "`n Committing and pushing changes to GitHub..."
 
+git add docs
+git commit -m " Auto-deploy updates to GitHub Pages"
+git push origin main
+
+Write-Host "`n Done! Your apps should appear at:"
+foreach ($app in $apps) {
+    Write-Host "   🌐 https://$githubUser.github.io/$repoName/$app/"
+}
 Write-Host ""
-Write-Host "=== All apps built and copied into /docs successfully ===" -ForegroundColor Green
-Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Cyan
-Write-Host "1. git add docs"
-Write-Host "2. git commit -m 'Deploy updated apps'"
-Write-Host "3. git push origin main"
-Write-Host ""
-Write-Host "Then visit:"
-Write-Host "   https://PrinceSanchela.github.io/E-commerce_web_ShopHub/"
-Write-Host "   https://PrinceSanchela.github.io/TaskFlow_Web/"
-Write-Host ""
-Write-Host "Done!"
