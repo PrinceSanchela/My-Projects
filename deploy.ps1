@@ -8,7 +8,7 @@ Write-Host "=== Starting GitHub Pages deployment ===" -ForegroundColor Cyan
 
 # ---- Configuration ----
 $apps = @(
-    @{ Name = "ShopHub"; Folder = "ShopHub" },
+    @{ Name = "E-commerce_web_ShopHub"; Folder = "E-commerce_web_ShopHub" },
     @{ Name = "TaskFlow_Web"; Folder = "TaskFlow_Web" }
 )
 
@@ -82,7 +82,7 @@ Write-Host "2. git commit -m 'Deploy updated apps'"
 Write-Host "3. git push origin main"
 Write-Host ""
 Write-Host "Then visit:"
-Write-Host "   https://PrinceSanchela.github.io/ShopHub/"
+Write-Host "   https://PrinceSanchela.github.io/E-commerce_web_ShopHub/"
 Write-Host "   https://PrinceSanchela.github.io/TaskFlow_Web/"
 Write-Host ""
 Write-Host "Done!"
