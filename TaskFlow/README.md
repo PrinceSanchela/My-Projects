@@ -1,8 +1,8 @@
-# Welcome to Prince Sanchela Projects
+# Welcome to your Prince Sanchela's Grand Projects
 
 ## Project info
 
-This is E-commerce Website -ShopHub which is made by Prince Sanchela
+This Project is made By Prince Sanchela
 
 ## How can I edit this code?
 
