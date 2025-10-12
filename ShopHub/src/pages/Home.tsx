@@ -82,10 +82,10 @@ const Home = () => {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      
+
       {/* Hero Section */}
       <section className="relative overflow-hidden">
-        <div 
+        <div
           className="h-[500px] bg-cover bg-center relative"
           style={{ backgroundImage: `url(${heroImage})` }}
         >
@@ -99,8 +99,8 @@ const Home = () => {
               <p className="text-xl text-white/90">
                 Discover the latest trends and exclusive deals
               </p>
-              <Button 
-                size="lg" 
+              <Button
+                size="lg"
                 className="bg-gradient-to-r from-secondary to-orange-600 hover:opacity-90 text-white"
               >
                 Shop Now
@@ -143,7 +143,7 @@ const Home = () => {
               Search results for "{searchQuery}"
             </h2>
           )}
-          
+
           {loading ? (
             <div className="flex justify-center items-center py-20">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
