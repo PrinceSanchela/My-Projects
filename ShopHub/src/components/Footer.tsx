@@ -96,15 +96,6 @@ const Footer: React.FC = () => {
                         <p className="text-gray-300 mb-4">
                             Get updates, offers, and discounts delivered straight to your inbox.
                         </p>
-
-                        {/* Promo Badge */}
-                        <motion.div
-                            // animate={pulse}
-                            className="absolute top-0 right-0 -translate-y-1/2 translate-x-1/2 bg-pink-500 text-white text-xs font-semibold px-3 py-1 rounded-full shadow-lg"
-                        >
-                            Get 10% Off!
-                        </motion.div>
-
                         <form className="flex flex-col sm:flex-row gap-2 relative group" onSubmit={handleSubscribe}>
                             <input
                                 type="email"
