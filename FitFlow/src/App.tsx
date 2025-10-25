@@ -9,6 +9,7 @@ import Preloader from "./components/Preloader";
 import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
+import ProtectedRoute from "@/components/ProtectedRoute";
 import Workouts from "./pages/Workouts";
 import Nutrition from "./pages/Nutrition";
 import Community from "./pages/Community";
@@ -41,7 +42,14 @@ const App: React.FC = () => {
                 <BrowserRouter>
                   <Routes>
                     <Route path="/" element={<Landing />} />
-                    <Route path="/dashboard" element={<Dashboard />} />
+                    <Route
+                      path="/dashboard"
+                      element={
+                        <ProtectedRoute>
+                          <Dashboard />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/auth" element={<Auth />} />
                     <Route path="/workouts" element={<Workouts />} />
                     <Route path="/nutrition" element={<Nutrition />} />

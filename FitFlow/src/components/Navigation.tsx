@@ -2,100 +2,81 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Dumbbell, LayoutDashboard, UtensilsCrossed, Users, User, LogOut, Menu, Settings } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  Dumbbell,
+  LayoutDashboard,
+  UtensilsCrossed,
+  Users,
+  User,
+  LogOut,
+  Menu,
+  Settings
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { auth } from "@/firebase/firebaseConfig";
+import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 
 export const Navigation = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [user, setUser] = useState<unknown>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const isActive = (path: string) => location.pathname === path;
 
+  // 🔹 Listen to Firebase Auth state
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser);
     });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => unsubscribe();
   }, []);
 
+  // 🔹 Sign out function
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    toast({ title: "Signed out successfully" });
-    navigate("/");
+    try {
+      await signOut(auth);
+      toast({ title: "Signed out successfully" });
+      navigate("/");
+    } catch (error: any) {
+      toast({ title: "Sign out failed", description: error.message, variant: "destructive" });
+    }
   };
 
   const NavLinks = () => (
     <>
       <Link to="/dashboard" onClick={() => setMobileOpen(false)}>
-        <Button
-          variant={isActive("/dashboard") ? "default" : "ghost"}
-          size="sm"
-          className="gap-2 w-full justify-start"
-        >
-          <LayoutDashboard className="h-4 w-4" />
-          Dashboard
+        <Button variant={isActive("/dashboard") ? "default" : "ghost"} size="sm" className="gap-2 w-full justify-start">
+          <LayoutDashboard className="h-4 w-4" /> Dashboard
         </Button>
       </Link>
       <Link to="/workouts" onClick={() => setMobileOpen(false)}>
-        <Button
-          variant={isActive("/workouts") ? "default" : "ghost"}
-          size="sm"
-          className="gap-2 w-full justify-start"
-        >
-          <Dumbbell className="h-4 w-4" />
-          Workouts
+        <Button variant={isActive("/workouts") ? "default" : "ghost"} size="sm" className="gap-2 w-full justify-start">
+          <Dumbbell className="h-4 w-4" /> Workouts
         </Button>
       </Link>
       <Link to="/nutrition" onClick={() => setMobileOpen(false)}>
-        <Button
-          variant={isActive("/nutrition") ? "default" : "ghost"}
-          size="sm"
-          className="gap-2 w-full justify-start"
-        >
-          <UtensilsCrossed className="h-4 w-4" />
-          Nutrition
+        <Button variant={isActive("/nutrition") ? "default" : "ghost"} size="sm" className="gap-2 w-full justify-start">
+          <UtensilsCrossed className="h-4 w-4" /> Nutrition
         </Button>
       </Link>
       <Link to="/community" onClick={() => setMobileOpen(false)}>
-        <Button
-          variant={isActive("/community") ? "default" : "ghost"}
-          size="sm"
-          className="gap-2 w-full justify-start"
-        >
-          <Users className="h-4 w-4" />
-          Community
+        <Button variant={isActive("/community") ? "default" : "ghost"} size="sm" className="gap-2 w-full justify-start">
+          <Users className="h-4 w-4" /> Community
         </Button>
       </Link>
       {user && (
         <>
           <Link to="/profile" onClick={() => setMobileOpen(false)}>
-            <Button
-              variant={isActive("/profile") ? "default" : "ghost"}
-              size="sm"
-              className="gap-2 w-full justify-start"
-            >
-              <User className="h-4 w-4" />
-              Profile
+            <Button variant={isActive("/profile") ? "default" : "ghost"} size="sm" className="gap-2 w-full justify-start">
+              <User className="h-4 w-4" /> {user.displayName || "Profile"}
             </Button>
           </Link>
           <Link to="/settings" onClick={() => setMobileOpen(false)}>
-            <Button
-              variant={isActive("/settings") ? "default" : "ghost"}
-              size="sm"
-              className="gap-2 w-full justify-start"
-            >
-              <Settings className="h-4 w-4" />
-              Settings
+            <Button variant={isActive("/settings") ? "default" : "ghost"} size="sm" className="gap-2 w-full justify-start">
+              <Settings className="h-4 w-4" /> Settings
             </Button>
           </Link>
         </>
@@ -126,14 +107,12 @@ export const Navigation = () => {
             <ThemeToggle />
             {user ? (
               <Button onClick={handleSignOut} variant="ghost" size="sm" className="gap-2">
-                <LogOut className="h-4 w-4" />
-                Sign Out
+                <LogOut className="h-4 w-4" /> Sign Out
               </Button>
             ) : (
               <Link to="/auth">
                 <Button variant="default" size="sm" className="gap-2">
-                  <User className="h-4 w-4" />
-                  Sign In
+                  <User className="h-4 w-4" /> Sign In
                 </Button>
               </Link>
             )}
@@ -153,23 +132,13 @@ export const Navigation = () => {
                   <NavLinks />
                   <div className="border-t pt-4">
                     {user ? (
-                      <Button
-                        onClick={() => {
-                          handleSignOut();
-                          setMobileOpen(false);
-                        }}
-                        variant="ghost"
-                        size="sm"
-                        className="gap-2 w-full justify-start"
-                      >
-                        <LogOut className="h-4 w-4" />
-                        Sign Out
+                      <Button onClick={() => { handleSignOut(); setMobileOpen(false); }} variant="ghost" size="sm" className="gap-2 w-full justify-start">
+                        <LogOut className="h-4 w-4" /> Sign Out
                       </Button>
                     ) : (
                       <Link to="/auth" onClick={() => setMobileOpen(false)}>
                         <Button variant="default" size="sm" className="gap-2 w-full">
-                          <User className="h-4 w-4" />
-                          Sign In
+                          <User className="h-4 w-4" /> Sign In
                         </Button>
                       </Link>
                     )}

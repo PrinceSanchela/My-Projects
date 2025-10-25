@@ -1,594 +1,666 @@
-import { useState, useEffect } from "react";
-import { Navigation } from "@/components/Navigation";
-import { Card } from "@/components/ui/card";
+import React, { useEffect, useRef, useState } from "react";
+import { db, auth } from "@/firebase/firebaseConfig";
+import {
+  collection,
+  addDoc,
+  onSnapshot,
+  updateDoc,
+  doc,
+  deleteDoc,
+  arrayUnion,
+  arrayRemove,
+  serverTimestamp,
+  query,
+  orderBy,
+} from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, Plus, Edit, Trash2, Heart, MessageCircle } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { useDemoMode } from "@/contexts/DemoContext";
-import { DemoBanner } from "@/components/DemoBanner";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Upload,
+  Heart,
+  MessageSquare,
+  Share2,
+  Trash,
+  Image as ImageIcon,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Edit,
+  Bell,
+} from "lucide-react";
+import { Navigation } from "@/components/Navigation";
+import { motion, AnimatePresence } from "framer-motion";
 
-interface Post {
-  id: string;
-  title: string;
-  content: string;
-  category: string;
-  created_at: string;
-  user_id: string;
-  comments_count: number;
-  profile?: {
-    full_name: string;
-    avatar_url: string | null;
-  };
-}
 
-interface Like {
-  user_id: string;
-}
+const CLOUD_NAME = "djnehcsju";
+const UPLOAD_PRESET = "ml_default";
 
 interface Comment {
   id: string;
-  content: string;
-  created_at: string;
-  user_id: string;
-  profile?: {
-    full_name: string;
-  };
+  userId: string;
+  userName: string;
+  userPhotoURL?: string;
+  text: string;
+  emojis?: string[];
 }
 
-const Community = () => {
-  const { isDemoMode, demoPosts, demoUser } = useDemoMode();
+interface Media {
+  url: string;
+  type: "image" | "video";
+}
+
+interface Post {
+  id: string;
+  userId: string;
+  userName: string;
+  userPhotoURL?: string;
+  text: string;
+  hashtags?: string[];
+  mediaUrls?: Media[];
+  likes: string[];
+  comments: Comment[];
+  createdAt: any;
+  emojis?: string[];
+}
+
+
+interface NotificationItem {
+  id: string;
+  postId: string;
+  type: "like" | "comment" | "emoji";
+  fromUser: string;
+  toUserId?: string;
+  text?: string;
+  createdAt?: any;
+}
+
+export default function Community() {
+  const postsRef = collection(db, "communityPosts");
+  const notificationsRef = collection(db, "notifications");
+
   const [posts, setPosts] = useState<Post[]>([]);
-  const [filteredPosts, setFilteredPosts] = useState<Post[]>([]);
-  const [user, setUser] = useState<any>(null);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingPost, setEditingPost] = useState<Post | null>(null);
-  const [selectedCategory, setSelectedCategory] = useState("all");
-  const [sortBy, setSortBy] = useState("recent");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [newPost, setNewPost] = useState({
-    title: "",
-    content: "",
-    category: "general"
-  });
-  const [postLikes, setPostLikes] = useState<Record<string, number>>({});
-  const [userLikes, setUserLikes] = useState<Record<string, boolean>>({});
-  const [activeComments, setActiveComments] = useState<string | null>(null);
-  const [comments, setComments] = useState<Record<string, Comment[]>>({});
-  const [newComment, setNewComment] = useState("");
-  const { toast } = useToast();
+  const [newPost, setNewPost] = useState("");
+  const [mediaFiles, setMediaFiles] = useState<File[]>([]);
+  const [mediaPreviews, setMediaPreviews] = useState<string[]>([]);
+  const [userId, setUserId] = useState<string>("");
+  const [userName, setUserName] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const [commentTexts, setCommentTexts] = useState<Record<string, string>>({});
+  const [editPostTexts, setEditPostTexts] = useState<Record<string, string>>({});
+  const [previewIndex, setPreviewIndex] = useState<number>(0);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewMedia, setPreviewMedia] = useState<Media[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+  const [highlightedPost, setHighlightedPost] = useState<string | null>(null);
 
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const postRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // load firebase user info
   useEffect(() => {
-    if (isDemoMode) {
-      setUser(demoUser);
-      setPosts(demoPosts as Post[]);
-      return;
+    const u = auth.currentUser;
+    if (u) {
+      setUserId(u.uid);
+      setUserName(u.displayName || u.email || "Anonymous");
     }
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
-  }, [isDemoMode, demoUser, demoPosts]);
-
-  useEffect(() => {
-    fetchPosts();
+    // Also listen for auth changes (if needed)
+    // const unsub = onAuthStateChanged(auth, (u) => { ... })
+    // return () => unsub();
   }, []);
 
+  // Real-time posts (ordered by createdAt desc)
   useEffect(() => {
-    filterAndSortPosts();
-  }, [posts, selectedCategory, sortBy, searchQuery]);
-
-  const fetchPosts = async () => {
-    const { data: postsData, error: postsError } = await supabase
-      .from("community_posts")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (postsError) {
-      toast({ title: "Error fetching posts", variant: "destructive" });
-      return;
-    }
-
-    if (!postsData || postsData.length === 0) {
-      setPosts([]);
-      return;
-    }
-
-    // Fetch profiles separately
-    const userIds = [...new Set(postsData.map(post => post.user_id))];
-    const { data: profilesData } = await supabase
-      .from("profiles")
-      .select("id, full_name, avatar_url")
-      .in("id", userIds);
-
-    const profilesMap = new Map(profilesData?.map(p => [p.id, p]) || []);
-
-    const enrichedPosts = postsData.map(post => ({
-      ...post,
-      profile: profilesMap.get(post.user_id)
-    }));
-
-    setPosts(enrichedPosts);
-    
-    // Fetch likes for all posts
-    enrichedPosts.forEach(post => {
-      fetchLikes(post.id);
-    });
-  };
-
-  const fetchLikes = async (postId: string) => {
-    const { data, error } = await supabase
-      .from("community_likes")
-      .select("user_id")
-      .eq("post_id", postId);
-
-    if (!error && data) {
-      setPostLikes(prev => ({ ...prev, [postId]: data.length }));
-      if (user) {
-        setUserLikes(prev => ({ 
-          ...prev, 
-          [postId]: data.some((like: Like) => like.user_id === user.id) 
-        }));
+    const q = query(postsRef, orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const arr: Post[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) } as Post));
+        setPosts(arr);
+      },
+      (err) => {
+        console.error("Posts snapshot error:", err);
+        // If Firestore complains about required index, the console message includes a link to create it.
       }
-    }
-  };
+    );
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const fetchComments = async (postId: string) => {
-    const { data: commentsData, error: commentsError } = await supabase
-      .from("community_comments")
-      .select("*")
-      .eq("post_id", postId)
-      .order("created_at", { ascending: true });
+  // Real-time notifications list (for current user) — simple feed of all notifications for demo
+  useEffect(() => {
+    const q = query(notificationsRef, orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      const arr: NotificationItem[] = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as any) } as NotificationItem))
+        // If you want only notifications targeted to the signed-in user, filter by toUserId === userId
+        // .filter(n => n.toUserId === userId)
+        ;
+      setNotifications(arr);
+    });
+    return () => unsub();
+  }, [userId]);
 
-    if (commentsError || !commentsData || commentsData.length === 0) {
-      setComments(prev => ({ ...prev, [postId]: [] }));
-      return;
-    }
-
-    // Fetch profiles for comment authors
-    const userIds = [...new Set(commentsData.map(c => c.user_id))];
-    const { data: profilesData } = await supabase
-      .from("profiles")
-      .select("id, full_name")
-      .in("id", userIds);
-
-    const profilesMap = new Map(profilesData?.map(p => [p.id, p]) || []);
-
-    const enrichedComments = commentsData.map(comment => ({
-      ...comment,
-      profile: profilesMap.get(comment.user_id)
-    }));
-
-    setComments(prev => ({ ...prev, [postId]: enrichedComments }));
-  };
-
-  const filterAndSortPosts = () => {
-    let filtered = [...posts];
-
-    if (selectedCategory !== "all") {
-      filtered = filtered.filter(post => post.category === selectedCategory);
-    }
-
-    if (searchQuery) {
-      filtered = filtered.filter(post => 
-        post.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        post.content.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-
-    if (sortBy === "recent") {
-      filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    } else if (sortBy === "popular") {
-      filtered.sort((a, b) => (postLikes[b.id] || 0) - (postLikes[a.id] || 0));
-    } else if (sortBy === "discussed") {
-      filtered.sort((a, b) => (b.comments_count || 0) - (a.comments_count || 0));
-    }
-
-    setFilteredPosts(filtered);
-  };
-
-  const handleSubmit = async () => {
-    if (!user) {
-      toast({ title: "Please sign in to create posts", variant: "destructive" });
-      return;
-    }
-
-    if (!newPost.title || !newPost.content) {
-      toast({ title: "Please fill in all fields", variant: "destructive" });
-      return;
-    }
-
-    const postData = {
-      title: newPost.title,
-      content: newPost.content,
-      category: newPost.category,
-      user_id: user.id
+  // Clean up object URLs when mediaPreviews change or component unmounts
+  useEffect(() => {
+    return () => {
+      mediaPreviews.forEach((p) => {
+        try {
+          URL.revokeObjectURL(p);
+        } catch { }
+      });
     };
+  }, [mediaPreviews]);
 
-    if (editingPost) {
-      const { error } = await supabase
-        .from("community_posts")
-        .update(postData)
-        .eq("id", editingPost.id);
+  /* ------------------------- Upload helpers ------------------------- */
 
-      if (error) {
-        toast({ title: "Error updating post", variant: "destructive" });
-      } else {
-        toast({ title: "Post updated successfully" });
-        setIsDialogOpen(false);
-        setEditingPost(null);
-        resetForm();
-        fetchPosts();
-      }
-    } else {
-      const { error } = await supabase
-        .from("community_posts")
-        .insert(postData);
+  async function uploadToCloudinary(file: File): Promise<Media> {
+    // This uses unsigned upload preset. Ensure the preset exists and is set to unsigned.
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("upload_preset", UPLOAD_PRESET);
 
-      if (error) {
-        toast({ title: "Error creating post", variant: "destructive" });
-      } else {
-        toast({ title: "Post created successfully" });
-        setIsDialogOpen(false);
-        resetForm();
-        fetchPosts();
-      }
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    const { error } = await supabase
-      .from("community_posts")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      toast({ title: "Error deleting post", variant: "destructive" });
-    } else {
-      toast({ title: "Post deleted successfully" });
-      fetchPosts();
-    }
-  };
-
-  const handleEdit = (post: Post) => {
-    setEditingPost(post);
-    setNewPost({
-      title: post.title,
-      content: post.content,
-      category: post.category
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`, {
+      method: "POST",
+      body: fd,
     });
-    setIsDialogOpen(true);
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Cloudinary upload failed (${res.status}): ${text}`);
+    }
+    const data = await res.json();
+    if (!data.secure_url) throw new Error("Upload returned no secure_url");
+    return { url: data.secure_url as string, type: file.type.startsWith("video") ? "video" : "image" };
+  }
+
+  /* ------------------------- Post CRUD ------------------------- */
+
+  const handleMediaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const files = Array.from(e.target.files);
+    setMediaFiles((prev) => [...prev, ...files]);
+    const previews = files.map((f) => URL.createObjectURL(f));
+    setMediaPreviews((prev) => [...prev, ...previews]);
   };
 
-  const handleLike = async (postId: string) => {
-    if (!user) {
-      toast({ title: "Please sign in to like posts", variant: "destructive" });
-      return;
-    }
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+  const handleDragLeave = () => setDragOver(false);
 
-    const isLiked = userLikes[postId];
-
-    if (isLiked) {
-      const { error } = await supabase
-        .from("community_likes")
-        .delete()
-        .eq("post_id", postId)
-        .eq("user_id", user.id);
-
-      if (!error) {
-        fetchLikes(postId);
-      }
-    } else {
-      const { error } = await supabase
-        .from("community_likes")
-        .insert({ post_id: postId, user_id: user.id });
-
-      if (!error) {
-        fetchLikes(postId);
-      }
-    }
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    setMediaFiles((prev) => [...prev, ...files]);
+    setMediaPreviews((prev) => [...prev, ...files.map((f) => URL.createObjectURL(f))]);
   };
 
-  const toggleComments = (postId: string) => {
-    if (activeComments === postId) {
-      setActiveComments(null);
-    } else {
-      setActiveComments(postId);
-      if (!comments[postId]) {
-        fetchComments(postId);
+  const handleAddPost = async () => {
+
+    if (!newPost.trim() && mediaFiles.length === 0) return;
+    setLoading(true);
+    try {
+      // upload media first
+      const uploaded: Media[] = [];
+      for (const f of mediaFiles) {
+        try {
+          const m = await uploadToCloudinary(f);
+          uploaded.push(m);
+        } catch (err) {
+          console.error("Media upload failed for file:", f.name, err);
+          // continue with other files (or you can abort)
+        }
       }
-    }
-  };
 
-  const handleAddComment = async (postId: string) => {
-    if (!user) {
-      toast({ title: "Please sign in to comment", variant: "destructive" });
-      return;
-    }
+      // extract hashtags
+      const hashtags = Array.from(newPost.matchAll(/#(\w+)/g), (m) => m[1]);
 
-    if (!newComment.trim()) {
-      toast({ title: "Please enter a comment", variant: "destructive" });
-      return;
-    }
-
-    const { error } = await supabase
-      .from("community_comments")
-      .insert({
-        post_id: postId,
-        user_id: user.id,
-        content: newComment
+      await addDoc(postsRef, {
+        text: newPost,
+        hashtags,
+        mediaUrls: uploaded,
+        likes: [],
+        comments: [],
+        userId,
+        userName,
+        userPhotoURL: auth.currentUser?.photoURL || "",
+        createdAt: serverTimestamp(),
+        emojis: [],
       });
 
-    if (error) {
-      toast({ title: "Error adding comment", variant: "destructive" });
-    } else {
-      setNewComment("");
-      fetchComments(postId);
-      fetchPosts(); // Refresh to get updated comments_count from trigger
+      // clear composer
+      setNewPost("");
+      setMediaFiles([]);
+      setMediaPreviews([]);
+    } catch (err) {
+      console.error("Error adding post:", err);
+      alert("Failed to add post. Check console for details.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const resetForm = () => {
-    setNewPost({
-      title: "",
-      content: "",
-      category: "general"
-    });
+  const handleDeletePost = async (postId: string) => {
+    if (!window.confirm("Delete this post?")) return;
+    try {
+      await deleteDoc(doc(db, "communityPosts", postId));
+    } catch (err) {
+      console.error("Failed to delete post:", err);
+      alert("Delete failed");
+    }
   };
 
-  const getCategoryIcon = (category: string) => {
-    const icons: Record<string, string> = {
-      general: "💬",
-      workout: "💪",
-      nutrition: "🥗",
-      progress: "📈",
-      motivation: "🔥"
-    };
-    return icons[category] || "💬";
+  const handleStartEdit = (postId: string, text: string) => {
+    setEditPostTexts((p) => ({ ...p, [postId]: text }));
   };
+
+  const handleEditPost = async (postId: string) => {
+    const text = editPostTexts[postId]?.trim();
+    if (!text) return;
+    try {
+      await updateDoc(doc(db, "communityPosts", postId), { text });
+      setEditPostTexts((p) => ({ ...p, [postId]: "" }));
+    } catch (err) {
+      console.error("Edit post failed:", err);
+      alert("Failed to save post");
+    }
+  };
+
+  /* ------------------------- Likes / Emojis / Notifications ------------------------- */
+
+  const handleLike = async (post: Post) => {
+    try {
+      const postRef = doc(db, "communityPosts", post.id);
+      const isLiked = (post.likes || []).includes(userId);
+      await updateDoc(postRef, { likes: isLiked ? arrayRemove(userId) : arrayUnion(userId) });
+
+      // create notification only when it's a new like and target isn't current user
+      if (!isLiked && post.userId && post.userId !== userId) {
+        await addDoc(notificationsRef, {
+          postId: post.id,
+          type: "like",
+          fromUser: userName,
+          toUserId: post.userId,
+          text: "",
+          createdAt: serverTimestamp(),
+        });
+      }
+    } catch (err) {
+      console.error("Like failed:", err);
+    }
+  };
+
+  const handleEmoji = async (post: Post, emoji: string) => {
+    try {
+      const postRef = doc(db, "communityPosts", post.id);
+      const has = (post.emojis || []).includes(emoji);
+      if (has) await updateDoc(postRef, { emojis: arrayRemove(emoji) });
+      else await updateDoc(postRef, { emojis: arrayUnion(emoji) });
+
+      if (!has && post.userId && post.userId !== userId) {
+        await addDoc(notificationsRef, {
+          postId: post.id,
+          type: "emoji",
+          fromUser: userName,
+          toUserId: post.userId,
+          text: emoji,
+          createdAt: serverTimestamp(),
+        });
+      }
+    } catch (err) {
+      console.error("Emoji update failed:", err);
+    }
+  };
+
+  /* ------------------------- Comments ------------------------- */
+
+  const handleAddComment = async (postId: string) => {
+    const txt = (commentTexts[postId] || "").trim();
+    if (!txt) return;
+    const comment: Comment = {
+      id: Date.now().toString(),
+      userId,
+      userName,
+      userPhotoURL: auth.currentUser?.photoURL || "",
+      text: txt,
+      emojis: [],
+    };
+    try {
+      await updateDoc(doc(db, "communityPosts", postId), { comments: arrayUnion(comment) });
+
+      // notify post owner
+      const p = posts.find((pp) => pp.id === postId);
+      if (p && p.userId && p.userId !== userId) {
+        await addDoc(notificationsRef, {
+          postId,
+          type: "comment",
+          fromUser: userName,
+          toUserId: p.userId,
+          text: txt,
+          createdAt: serverTimestamp(),
+        });
+      }
+      setCommentTexts((prev) => ({ ...prev, [postId]: "" }));
+    } catch (err) {
+      console.error("Add comment failed:", err);
+      alert("Failed to post comment");
+    }
+  };
+
+  const handleEditComment = async (postId: string, comment: Comment) => {
+    const newText = prompt("Edit your comment", comment.text);
+    if (!newText || newText.trim() === comment.text) return;
+    try {
+      const refDoc = doc(db, "communityPosts", postId);
+      await updateDoc(refDoc, { comments: arrayRemove(comment) });
+      await updateDoc(refDoc, { comments: arrayUnion({ ...comment, text: newText }) });
+    } catch (err) {
+      console.error("Edit comment failed:", err);
+    }
+  };
+
+  const handleDeleteComment = async (postId: string, comment: Comment) => {
+    try {
+      await updateDoc(doc(db, "communityPosts", postId), { comments: arrayRemove(comment) });
+    } catch (err) {
+      console.error("Delete comment failed:", err);
+    }
+  };
+
+  /* ------------------------- Share + Preview ------------------------- */
+
+  const handleShare = (post: Post) => {
+    const url = window.location.href;
+    if (navigator.share) {
+      navigator.share({ title: "Check out this post!", text: post.text, url });
+    } else {
+      // fallback: copy to clipboard
+      navigator.clipboard?.writeText(`${post.text}\n${url}`).then(() => alert("Post copied to clipboard"));
+    }
+  };
+
+  const openPreview = (media: Media[], index: number) => {
+    setPreviewMedia(media);
+    setPreviewIndex(index);
+    setPreviewOpen(true);
+    // lock scroll
+    document.body.style.overflow = "hidden";
+  };
+  const closePreview = () => {
+    setPreviewOpen(false);
+    document.body.style.overflow = "";
+  };
+  const prevMedia = () => setPreviewIndex((p) => (p - 1 + previewMedia.length) % previewMedia.length);
+  const nextMedia = () => setPreviewIndex((p) => (p + 1) % previewMedia.length);
+
+  /* ------------------------- Render ------------------------- */
 
   return (
-    <div className="min-h-screen bg-background">
-      <DemoBanner />
+    <div
+      className="min-h-screen bg-background text-foreground"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <Navigation />
-      
-      <main className={`container mx-auto px-4 ${isDemoMode ? 'pt-32' : 'pt-24'} pb-12`}>
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-          <div>
-            <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-              Community
-            </h1>
-            <p className="text-muted-foreground">
-              Share your journey, inspire others, and stay motivated together
-            </p>
-          </div>
-          
-          {user && (
-            <Dialog open={isDialogOpen} onOpenChange={(open) => {
-              setIsDialogOpen(open);
-              if (!open) {
-                setEditingPost(null);
-                resetForm();
-              }
-            }}>
-              <DialogTrigger asChild>
-                <Button className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  New Post
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>{editingPost ? "Edit Post" : "Create New Post"}</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Title</label>
-                    <Input
-                      placeholder="What's on your mind?"
-                      value={newPost.title}
-                      onChange={(e) => setNewPost({ ...newPost, title: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Content</label>
-                    <Textarea
-                      placeholder="Share your thoughts, progress, or ask questions..."
-                      value={newPost.content}
-                      onChange={(e) => setNewPost({ ...newPost, content: e.target.value })}
-                      rows={6}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Category</label>
-                    <Select value={newPost.category} onValueChange={(value) => setNewPost({ ...newPost, category: value })}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="general">💬 General</SelectItem>
-                        <SelectItem value="workout">💪 Workout</SelectItem>
-                        <SelectItem value="nutrition">🥗 Nutrition</SelectItem>
-                        <SelectItem value="progress">📈 Progress</SelectItem>
-                        <SelectItem value="motivation">🔥 Motivation</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button onClick={handleSubmit} className="w-full">
-                    {editingPost ? "Update Post" : "Publish Post"}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
+
+      {/* Notification Button */}
+      <div className="fixed top-4 right-4 z-50">
+        <Button variant="ghost" size="icon" onClick={() => setShowNotifPanel((s) => !s)}>
+          <Bell size={20} />
+        </Button>
+      </div>
+
+      {/* Notifications panel */}
+      {showNotifPanel && (
+        <div className="absolute right-4 top-16 w-80 max-h-96 overflow-y-auto bg-card/90 backdrop-blur-md border border-border rounded-lg p-4 space-y-2 z-50">
+          {notifications.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No notifications</p>
+          ) : (
+            notifications.map((n) => (
+              <div
+                key={n.id}
+                className="text-sm bg-muted/50 p-2 rounded-md cursor-pointer hover:bg-muted/70"
+                onClick={() => {
+                  const ref = postRefs.current[n.postId];
+                  if (ref) {
+                    ref.scrollIntoView({ behavior: "smooth", block: "center" });
+                    setHighlightedPost(n.postId);
+                    setTimeout(() => setHighlightedPost(null), 2000);
+                    setShowNotifPanel(false);
+                  }
+                }}
+              >
+                {n.type === "like" && <span><strong>{n.fromUser}</strong> liked your post</span>}
+                {n.type === "comment" && <span><strong>{n.fromUser}</strong> commented: "{n.text}"</span>}
+                {n.type === "emoji" && <span><strong>{n.fromUser}</strong> reacted {n.text}</span>}
+              </div>
+            ))
           )}
         </div>
+      )}
 
-        <Card className="p-4 mb-6">
-          <div className="flex flex-col md:flex-row gap-4">
-            <div className="flex-1">
-              <Input
-                placeholder="Search posts..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                <SelectTrigger className="w-[150px]">
-                  <SelectValue placeholder="Category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Categories</SelectItem>
-                  <SelectItem value="general">💬 General</SelectItem>
-                  <SelectItem value="workout">💪 Workout</SelectItem>
-                  <SelectItem value="nutrition">🥗 Nutrition</SelectItem>
-                  <SelectItem value="progress">📈 Progress</SelectItem>
-                  <SelectItem value="motivation">🔥 Motivation</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="w-[150px]">
-                  <SelectValue placeholder="Sort by" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="recent">Recent</SelectItem>
-                  <SelectItem value="popular">Most Liked</SelectItem>
-                  <SelectItem value="discussed">Most Discussed</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </Card>
+      <div className="max-w-3xl mx-auto py-8 px-4 space-y-6">
+        {/* Create Post */}
+        <Card className={`p-6 shadow-lg bg-card/80 backdrop-blur-md border border-border rounded-2xl ${dragOver ? "border-blue-500 border-2" : ""}`}>
+          <CardContent className="space-y-4">
+            <Input
+              ref={inputRef}
+              placeholder="What's on your mind?"
+              value={newPost}
+              onChange={(e) => setNewPost(e.target.value)}
+              className="bg-background/70"
+            />
 
-        <div className="space-y-4">
-          {filteredPosts.map((post) => (
-            <Card key={post.id} className="p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-start gap-4 mb-4">
-                <Avatar>
-                  <AvatarFallback className="bg-gradient-primary text-background">
-                    {post.profile?.full_name?.[0]?.toUpperCase() || "U"}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="font-semibold">{post.profile?.full_name || "Anonymous"}</h3>
-                    <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
-                      {getCategoryIcon(post.category)} {post.category}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {new Date(post.created_at).toLocaleDateString()} at {new Date(post.created_at).toLocaleTimeString()}
-                  </p>
-                </div>
-                {user?.id === post.user_id && (
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="ghost" onClick={() => handleEdit(post)}>
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => handleDelete(post.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
-              </div>
+            <div className="flex gap-2 items-center">
+              <label className="cursor-pointer flex items-center gap-1 px-3 py-1 bg-muted rounded-md">
+                <ImageIcon size={16} />
+                <span>Image/Video</span>
+                <input type="file" accept="image/*,video/*" multiple className="hidden" onChange={handleMediaChange} />
+              </label>
 
-              <h2 className="text-xl font-bold mb-2">{post.title}</h2>
-              <p className="text-muted-foreground mb-4 whitespace-pre-wrap">{post.content}</p>
-
-              <div className="flex items-center gap-4 pt-4 border-t">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleLike(post.id)}
-                  className={`gap-2 ${userLikes[post.id] ? 'text-destructive' : ''}`}
-                >
-                  <Heart className={`h-4 w-4 ${userLikes[post.id] ? 'fill-destructive' : ''}`} />
-                  {postLikes[post.id] || 0}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => toggleComments(post.id)}
-                  className="gap-2"
-                >
-                  <MessageCircle className="h-4 w-4" />
-                  {post.comments_count || 0}
-                </Button>
-              </div>
-
-              {activeComments === post.id && (
-                <div className="mt-4 pt-4 border-t space-y-4">
-                  <div className="space-y-3">
-                    {comments[post.id]?.map((comment) => (
-                      <div key={comment.id} className="flex gap-3 p-3 bg-muted/50 rounded-lg">
-                        <Avatar className="h-8 w-8">
-                          <AvatarFallback className="text-xs bg-primary/20">
-                            {comment.profile?.full_name?.[0]?.toUpperCase() || "U"}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-medium text-sm">{comment.profile?.full_name || "Anonymous"}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {new Date(comment.created_at).toLocaleDateString()}
-                            </span>
-                          </div>
-                          <p className="text-sm">{comment.content}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  {user && (
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="Write a comment..."
-                        value={newComment}
-                        onChange={(e) => setNewComment(e.target.value)}
-                        onKeyPress={(e) => {
-                          if (e.key === 'Enter') {
-                            handleAddComment(post.id);
-                          }
-                        }}
-                      />
-                      <Button onClick={() => handleAddComment(post.id)}>Post</Button>
-                    </div>
+              {mediaPreviews.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto">
+                  {mediaPreviews.map((src, idx) =>
+                    src.match(/\.(mp4|webm|ogg)$/i) ? (
+                      <video key={idx} src={src} className="h-20 rounded-md" controls />
+                    ) : (
+                      <img key={idx} src={src} className="h-20 rounded-md object-cover" />
+                    )
                   )}
                 </div>
               )}
-            </Card>
+
+              <Button onClick={handleAddPost} disabled={loading} className="ml-auto bg-blue-600 text-white">
+                <Upload className="mr-1 h-4 w-4" /> {loading ? "Posting..." : "Post"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Posts feed */}
+        <AnimatePresence>
+          {posts.map((post) => (
+            <motion.div
+              key={post.id}
+              ref={(el) => (postRefs.current[post.id] = el)}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.2 }}
+              className={highlightedPost === post.id ? "border-2 border-blue-500 rounded-2xl transition-all" : ""}
+            >
+              <Card className="p-4 shadow-md bg-card/80 backdrop-blur-sm border border-border rounded-2xl">
+                <CardContent>
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      {post.userPhotoURL && (
+                        <img
+                          src={post.userPhotoURL}
+                          alt={post.userName}
+                          className="w-8 h-8 rounded-full object-cover"
+                        />
+                      )}
+                      <h3 className="font-semibold">{post.userName}</h3>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="ghost" size="icon" onClick={() => handleShare(post)}>
+                        <Share2 size={18} />
+                      </Button>
+                      {post.userId === userId && (
+                        <>
+                          <Button variant="ghost" size="icon" onClick={() => handleDeletePost(post.id)}>
+                            <Trash size={18} />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => handleStartEdit(post.id, post.text)}>
+                            <Edit size={18} />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+
+                  {editPostTexts[post.id] ? (
+                    <div className="flex gap-2 mb-3">
+                      <Input value={editPostTexts[post.id]} onChange={(e) => setEditPostTexts((p) => ({ ...p, [post.id]: e.target.value }))} />
+                      <Button onClick={() => handleEditPost(post.id)}>Save</Button>
+                    </div>
+                  ) : (
+                    <p className="mb-3 text-sm">
+                      {post.text}{" "}
+                      {post.hashtags?.map((tag) => (
+                        <span key={tag} className="text-blue-500">
+                          #{tag}{" "}
+                        </span>
+                      ))}
+                    </p>
+                  )}
+
+                  {post.mediaUrls && post.mediaUrls.length > 0 && (
+                    <div className="flex flex-col gap-2 mb-3">
+                      {post.mediaUrls.map((m, idx) =>
+                        m.type === "video" ? (
+                          <video
+                            key={idx}
+                            src={m.url}
+                            controls
+                            className="rounded-xl max-h-80 w-full object-cover cursor-pointer"
+                            onClick={() => openPreview(post.mediaUrls!, idx)}
+                          />
+                        ) : (
+                          <img
+                            key={idx}
+                            src={m.url}
+                            className="rounded-xl max-h-80 w-full object-cover cursor-pointer"
+                            onClick={() => openPreview(post.mediaUrls!, idx)}
+                          />
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  {/* Reactions */}
+                  <div className="flex gap-2 mb-2">
+                    <Button variant="ghost" size="sm" onClick={() => handleEmoji(post, "❤️")}>
+                      ❤️ {post.emojis?.filter((e) => e === "❤️").length || 0}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleEmoji(post, "😂")}>
+                      😂 {post.emojis?.filter((e) => e === "😂").length || 0}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleEmoji(post, "🔥")}>
+                      🔥 {post.emojis?.filter((e) => e === "🔥").length || 0}
+                    </Button>
+                  </div>
+
+                  <div className="flex items-center gap-4 mb-2">
+                    <Button variant="ghost" size="sm" onClick={() => handleLike(post)}>
+                      <Heart className={`mr-1 ${post.likes?.includes(userId) ? "text-red-500 fill-red-500" : "text-gray-500"}`} />
+                      {post.likes?.length || 0}
+                    </Button>
+
+                    <Button variant="ghost" size="sm" onClick={() => inputRef.current?.focus()}>
+                      <MessageSquare className="mr-1 text-gray-500" />
+                      {post.comments?.length || 0}
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {post.comments?.map((c) => (
+                      <div key={c.id} className="flex justify-between items-start bg-muted/50 p-2 rounded-md">
+                        <div className="flex items-center gap-2">
+                          {c.userPhotoURL && (
+                            <img
+                              src={c.userPhotoURL}
+                              alt={c.userName}
+                              className="w-6 h-6 rounded-full object-cover"
+                            />
+                          )}
+                          <span className="text-sm">
+                            <strong>{c.userName}:</strong> {c.text}
+                          </span>
+                        </div>
+                        {c.userId === userId && (
+                          <div className="flex gap-1 ml-2">
+                            <Button variant="ghost" size="icon" onClick={() => handleEditComment(post.id, c)}>
+                              <Edit size={14} />
+                            </Button>
+                            <Button variant="ghost" size="icon" onClick={() => handleDeleteComment(post.id, c)}>
+                              <Trash size={14} />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+
+                    ))}
+
+                    <div className="flex gap-2 mt-2">
+                      <Input placeholder="Add a comment..." value={commentTexts[post.id] || ""} onChange={(e) => setCommentTexts((p) => ({ ...p, [post.id]: e.target.value }))} />
+                      <Button onClick={() => handleAddComment(post.id)} size="icon">
+                        <Upload size={16} />
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
           ))}
-        </div>
+        </AnimatePresence>
+      </div>
 
-        {!user && (
-          <Card className="p-8 text-center">
-            <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-            <p className="text-lg mb-4">Sign in to join the community and share your journey</p>
-            <Button onClick={() => window.location.href = "/auth"}>
-              Sign In
+      {/* Fullscreen preview */}
+      {previewOpen && previewMedia.length > 0 && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50" onClick={closePreview}>
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            <Button variant="ghost" size="icon" className="absolute top-4 right-4 text-white" onClick={closePreview}>
+              <X size={24} />
             </Button>
-          </Card>
-        )}
 
-        {filteredPosts.length === 0 && user && (
-          <Card className="p-8 text-center">
-            <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-            <p className="text-lg mb-4">No posts found. Be the first to share!</p>
-          </Card>
-        )}
-      </main>
+            {previewMedia[previewIndex].type === "video" ? (
+              <video src={previewMedia[previewIndex].url} controls className="max-h-[80vh] max-w-[90vw]" />
+            ) : (
+              <img src={previewMedia[previewIndex].url} className="max-h-[80vh] max-w-[90vw]" />
+            )}
+
+            {previewMedia.length > 1 && (
+              <>
+                <Button variant="ghost" size="icon" className="absolute left-4 top-1/2 -translate-y-1/2 text-white" onClick={prevMedia}>
+                  <ChevronLeft size={24} />
+                </Button>
+                <Button variant="ghost" size="icon" className="absolute right-4 top-1/2 -translate-y-1/2 text-white" onClick={nextMedia}>
+                  <ChevronRight size={24} />
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
-};
+}
 
-export default Community;

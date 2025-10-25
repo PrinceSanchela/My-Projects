@@ -3,121 +3,120 @@ import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Mail, Lock, User as UserIcon, Sparkles } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { ArrowLeft, Mail, Lock, User as UserIcon, Sparkles, Chrome } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDemoMode } from "@/contexts/DemoContext";
+import { auth, db } from "@/firebase/firebaseConfig";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
+  onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup
+} from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
+
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
-  const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-    fullName: ""
-  });
+  const [loading, setLoading] = useState(true);
+  const [formData, setFormData] = useState({ email: "", password: "", fullName: "" });
   const navigate = useNavigate();
   const { toast } = useToast();
   const { setIsDemoMode } = useDemoMode();
 
+  // 🔹 Demo Mode
   const handleDemoMode = () => {
     setIsDemoMode(true);
-    toast({
-      title: "Demo Mode Activated! 🎉",
-      description: "Explore all features with sample data"
-    });
+    toast({ title: "Demo Mode Activated! 🎉", description: "Explore all features with sample data" });
     navigate("/dashboard");
   };
 
+  // 🔹 Firebase Auth state listener
   useEffect(() => {
-    // Check if user is already logged in
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        navigate("/dashboard");
-      }
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) navigate("/dashboard");
+      setLoading(false);
     });
+    return () => unsubscribe();
   }, [navigate]);
+
+  // 🔹 Create default data for new users
+  const createDefaultData = async (uid: string) => {
+    await setDoc(doc(db, "workouts", `${uid}-workout-1`), {
+      userId: uid,
+      name: "Full Body Warmup",
+      description: "10 min full body warmup",
+      scheduled_date: new Date().toISOString().split("T")[0],
+      completed: false
+    });
+    await setDoc(doc(db, "meals", `${uid}-meal-1`), {
+      userId: uid,
+      name: "Protein Breakfast",
+      calories: 350,
+      protein: 30,
+      carbs: 40,
+      fats: 10,
+      scheduled_date: new Date().toISOString().split("T")[0]
+    });
+  };
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    if (!formData.email || !formData.password) {
-      toast({
-        title: "Error",
-        description: "Please fill in all fields",
-        variant: "destructive"
-      });
+    if (!formData.email || !formData.password || (!isLogin && !formData.fullName)) {
+      toast({ title: "Error", description: "Please fill in all fields", variant: "destructive" });
       setLoading(false);
       return;
     }
 
     try {
       if (isLogin) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: formData.email,
-          password: formData.password
-        });
-
-        if (error) {
-          toast({
-            title: "Sign in failed",
-            description: error.message,
-            variant: "destructive"
-          });
-        } else {
-          toast({
-            title: "Welcome back!",
-            description: "You've successfully signed in"
-          });
-          navigate("/dashboard");
-        }
+        // 🔹 Sign In
+        await signInWithEmailAndPassword(auth, formData.email, formData.password);
+        toast({ title: "Welcome back!", description: "Signed in successfully" });
       } else {
-        if (!formData.fullName) {
-          toast({
-            title: "Error",
-            description: "Please enter your full name",
-            variant: "destructive"
-          });
-          setLoading(false);
-          return;
+        // 🔹 Sign Up
+        const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+        if (auth.currentUser) {
+          await updateProfile(auth.currentUser, { displayName: formData.fullName });
+          await createDefaultData(auth.currentUser.uid);
         }
-
-        const { data, error } = await supabase.auth.signUp({
-          email: formData.email,
-          password: formData.password,
-          options: {
-            data: {
-              full_name: formData.fullName
-            },
-            emailRedirectTo: `${window.location.origin}/dashboard`
-          }
-        });
-
-        if (error) {
-          toast({
-            title: "Sign up failed",
-            description: error.message,
-            variant: "destructive"
-          });
-        } else {
-          toast({
-            title: "Account created!",
-            description: "Welcome to FitFlow"
-          });
-          navigate("/dashboard");
-        }
+        toast({ title: "Account created! 🎉", description: "Welcome to FitFlow" });
       }
+
+      navigate("/dashboard");
     } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive"
-      });
+      toast({ title: "Authentication Error", description: error.message, variant: "destructive" });
     } finally {
       setLoading(false);
     }
   };
+
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      if (result.user) await createDefaultData(result.user.uid);
+      toast({ title: "Welcome! 👋", description: "Signed in successfully with Google" });
+      navigate("/dashboard");
+    } catch (error: any) {
+      toast({ title: "Google Sign-In Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-black text-white">
+        <p>Checking authentication...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-dark flex items-center justify-center p-4">
@@ -127,7 +126,9 @@ const Auth = () => {
             {isLogin ? "Welcome Back" : "Create Account"}
           </h1>
           <p className="text-muted-foreground">
-            {isLogin ? "Sign in to continue your fitness journey" : "Join FitFlow and start your transformation"}
+            {isLogin
+              ? "Sign in to continue your fitness journey"
+              : "Join FitFlow and start your transformation"}
           </p>
         </div>
 
@@ -180,7 +181,7 @@ const Auth = () => {
           </div>
 
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Processing..." : (isLogin ? "Sign In" : "Create Account")}
+            {loading ? "Processing..." : isLogin ? "Sign In" : "Create Account"}
           </Button>
         </form>
 
@@ -193,19 +194,22 @@ const Auth = () => {
             className="text-sm text-muted-foreground hover:text-primary transition-colors"
             disabled={loading}
           >
-            {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+            {isLogin
+              ? "Don't have an account? Sign up"
+              : "Already have an account? Sign in"}
           </button>
         </div>
 
         <div className="mt-6 space-y-3">
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">Or</span>
-            </div>
-          </div>
+          <Button
+            variant="outline"
+            onClick={handleGoogleSignIn}
+            className="w-full gap-2 border-gray-300 hover:border-primary hover:bg-primary/10"
+            disabled={loading}
+          >
+            <Chrome className="h-4 w-4 text-primary" />
+            Continue with Google
+          </Button>
 
           <Button
             variant="outline"

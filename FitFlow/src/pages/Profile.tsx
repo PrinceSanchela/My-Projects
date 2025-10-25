@@ -1,208 +1,276 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Navigation } from "@/components/Navigation";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { User, Mail, Save } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate } from "react-router-dom";
-import { useDemoMode } from "@/contexts/DemoContext";
-import { DemoBanner } from "@/components/DemoBanner";
+import { useAuth } from "@/contexts/AuthContext";
+import { db } from "@/firebase/firebaseConfig";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { updateProfile, updatePassword } from "firebase/auth";
+import axios from "axios";
+import Cropper from "react-easy-crop";
+import { getCroppedImg } from "@/utils/cropImage";
+
+interface UserProfile {
+  full_name: string;
+  email: string;
+  photoURL: string;
+  age?: number;
+  weight?: number;
+  height?: number;
+  waist?: number;
+  hip?: number;
+  bmi?: number;
+  bodyFat?: number;
+}
 
 const Profile = () => {
-  const { isDemoMode, demoUser, demoWorkouts, demoMeals, demoPosts } = useDemoMode();
-  const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState({
-    full_name: "",
-    email: ""
-  });
-  const [loading, setLoading] = useState(false);
+  const { user } = useAuth();
+  const [profile, setProfile] = useState<UserProfile>({ full_name: "", email: "", photoURL: "" });
+  const [tempProfile, setTempProfile] = useState<UserProfile>({} as UserProfile);
+  const [physicalStats, setPhysicalStats] = useState<UserProfile>({} as UserProfile);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [editingStats, setEditingStats] = useState(false);
+  const [newPhoto, setNewPhoto] = useState<File | null>(null);
+  const [croppedImage, setCroppedImage] = useState<File | null>(null);
+  const [showCropModal, setShowCropModal] = useState(false);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [password, setPassword] = useState("");
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   useEffect(() => {
-    if (isDemoMode) {
-      setUser(demoUser);
-      setProfile({
-        full_name: demoUser.full_name,
-        email: demoUser.email
-      });
-      return;
-    }
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        navigate("/auth");
-        return;
-      }
-      setUser(session.user);
-      fetchProfile(session.user.id);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) {
-        navigate("/auth");
-        return;
-      }
-      setUser(session.user);
-    });
-
-    return () => subscription.unsubscribe();
-  }, [navigate, isDemoMode, demoUser]);
-
-  const fetchProfile = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .single();
-
-    if (data) {
-      setProfile({
-        full_name: data.full_name || "",
-        email: data.email || ""
-      });
-    }
-  };
-
-  const handleSave = async () => {
     if (!user) return;
-    
-    setLoading(true);
-    const { error } = await supabase
-      .from("profiles")
-      .update({
-        full_name: profile.full_name
-      })
-      .eq("id", user.id);
+    const userDocRef = doc(db, "users", user.uid);
+    const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+      const data = docSnap.data();
+      if (data) {
+        const bmi = data.height && data.weight ? (data.weight / ((data.height / 100) ** 2)).toFixed(1) : undefined;
+        const updatedProfile: UserProfile = {
+          full_name: data.full_name || user.displayName || "",
+          email: user.email,
+          photoURL: data.photoURL || user.photoURL || "",
+          age: data.age,
+          weight: data.weight,
+          height: data.height,
+          waist: data.waist,
+          hip: data.hip,
+          bmi: bmi ? parseFloat(bmi) : undefined,
+          bodyFat: data.bodyFat,
+        };
+        setProfile(updatedProfile);
+        setTempProfile(updatedProfile);
+        setPhysicalStats(updatedProfile);
+      }
+    });
+    return () => unsubscribe();
+  }, [user]);
 
-    if (error) {
-      toast({ title: "Error updating profile", variant: "destructive" });
-    } else {
-      toast({ title: "Profile updated successfully" });
-    }
-    setLoading(false);
+  const onCropComplete = useCallback((_: any, croppedPixels: any) => {
+    setCroppedAreaPixels(croppedPixels);
+  }, []);
+
+  const handleCropSave = async () => {
+    if (!newPhoto || !croppedAreaPixels) return;
+    const croppedFile = await getCroppedImg(URL.createObjectURL(newPhoto), croppedAreaPixels);
+    setCroppedImage(croppedFile);
+    setShowCropModal(false);
   };
+
+  const handlePhotoUpload = async () => {
+    if (!croppedImage || !user) return toast({ title: "Select a photo", variant: "destructive" });
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", croppedImage);
+      formData.append("upload_preset", "fitflow_upload_img");
+
+      const res = await axios.post("https://api.cloudinary.com/v1_1/djnehcsju/image/upload", formData, {
+        onUploadProgress: progressEvent => setUploadProgress(Math.round((progressEvent.loaded * 100) / progressEvent.total))
+      });
+
+      const photoURL = res.data.secure_url;
+      await updateProfile(user, { photoURL });
+      const userDocRef = doc(db, "users", user.uid);
+      await setDoc(userDocRef, { photoURL }, { merge: true });
+
+      setProfile(prev => ({ ...prev, photoURL }));
+      setNewPhoto(null);
+      setCroppedImage(null);
+      setUploadProgress(0);
+      toast({ title: "Profile photo updated!" });
+    } catch (err: any) {
+      console.error(err);
+      toast({ title: "Error uploading photo", description: err.message, variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleProfileSave = async () => {
+    if (!user) return;
+    try {
+      const { full_name } = tempProfile;
+      if (full_name !== profile.full_name) await updateProfile(user, { displayName: full_name });
+      const userDocRef = doc(db, "users", user.uid);
+      await setDoc(userDocRef, { full_name }, { merge: true });
+      if (password) {
+        await updatePassword(user, password);
+        setPassword("");
+      }
+      setProfile({ ...profile, ...tempProfile });
+      setEditingProfile(false);
+      toast({ title: "Profile updated successfully!" });
+    } catch (err: any) {
+      toast({ title: "Error updating profile", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const handleStatsSave = async () => {
+    if (!user) return;
+    try {
+      const { weight, height, waist, hip, age, bodyFat } = physicalStats;
+      const bmi = weight && height ? parseFloat((weight / ((height / 100) ** 2)).toFixed(1)) : undefined;
+      const userDocRef = doc(db, "users", user.uid);
+      await setDoc(userDocRef, { weight, height, waist, hip, age, bodyFat, bmi }, { merge: true });
+      setProfile(prev => ({ ...prev, weight, height, waist, hip, age, bodyFat, bmi }));
+      setEditingStats(false);
+      toast({ title: "Physical stats updated!" });
+    } catch (err: any) {
+      toast({ title: "Error updating stats", description: err.message, variant: "destructive" });
+    }
+  };
+
+  if (!user) return <div className="text-center mt-32">Loading profile...</div>;
+
+  const waistHipRatio = physicalStats.waist && physicalStats.hip ? (physicalStats.waist / physicalStats.hip).toFixed(2) : "-";
+  const bmiCategory = profile.bmi
+    ? profile.bmi < 18.5 ? "Underweight"
+      : profile.bmi < 24.9 ? "Normal"
+        : profile.bmi < 29.9 ? "Overweight"
+          : "Obese"
+    : "-";
 
   return (
     <div className="min-h-screen bg-background">
-      <DemoBanner />
       <Navigation />
-      
-      <main className={`container mx-auto px-4 ${isDemoMode ? 'pt-32' : 'pt-24'} pb-12`}>
-        <div className="max-w-2xl mx-auto">
-          <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-            My Profile
-          </h1>
-          <p className="text-muted-foreground mb-8">
-            Manage your account information
-          </p>
+      <main className="container mx-auto px-4 pt-24 pb-12 space-y-8">
+        <h1 className="text-4xl font-bold mb-6">My Profile</h1>
 
-          <Card className="p-6">
-            <div className="space-y-6">
-              <div>
-                <label className="text-sm font-medium mb-2 block">Full Name</label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <Input
-                    type="text"
-                    placeholder="Your name"
-                    className="pl-10"
-                    value={profile.full_name}
-                    onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
-                  />
+        {/* Profile Card */}
+        <Card className="p-6 flex flex-col md:flex-row items-center gap-6">
+          <div className="flex flex-col items-center gap-4">
+            <div className="relative w-32 h-32">
+              <img
+                src={croppedImage ? URL.createObjectURL(croppedImage) : profile.photoURL}
+                alt="Profile"
+                className="w-32 h-32 rounded-full object-cover border-2 border-primary"
+              />
+              {uploading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full">
+                  <span className="text-white font-semibold">{uploadProgress}%</span>
                 </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium mb-2 block">Email</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <Input
-                    type="email"
-                    placeholder="Your email"
-                    className="pl-10"
-                    value={profile.email}
-                    disabled
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Email cannot be changed</p>
-              </div>
-
-              <Button onClick={handleSave} disabled={loading} className="w-full gap-2">
-                <Save className="h-4 w-4" />
-                {loading ? "Saving..." : "Save Changes"}
-              </Button>
+              )}
             </div>
-          </Card>
+            <Input
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                setNewPhoto(e.target.files?.[0] || null);
+                setShowCropModal(true);
+              }}
+            />
 
-          <AccountStats userId={user?.id} />
-        </div>
+            {/* Crop Modal with Live Circle Preview */}
+            {showCropModal && newPhoto && (
+              <div className="fixed inset-0 z-50 bg-black/70 flex justify-center items-center">
+                <Card className="p-4 relative w-96 h-96 flex flex-col">
+                  <div className="relative flex-1">
+                    <Cropper
+                      image={URL.createObjectURL(newPhoto)}
+                      crop={crop}
+                      zoom={zoom}
+                      aspect={1}
+                      cropShape="round"
+                      showGrid={false}
+                      onCropChange={setCrop}
+                      onZoomChange={setZoom}
+                      onCropComplete={onCropComplete}
+                    />
+                    <div className="absolute top-0 left-0 w-full h-full flex justify-center items-center pointer-events-none">
+                      <div className="w-32 h-32 border-2 border-white rounded-full" />
+                    </div>
+                  </div>
+                  <div className="flex justify-between mt-4">
+                    <Button onClick={handleCropSave}>Crop & Save</Button>
+                    <Button variant="outline" onClick={() => setShowCropModal(false)}>Cancel</Button>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            <Button onClick={handlePhotoUpload} disabled={!croppedImage || uploading}>
+              {uploading ? "Uploading..." : "Upload Photo"}
+            </Button>
+          </div>
+
+          {/* Profile Info */}
+          <div className="flex-1 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                value={tempProfile.full_name}
+                onChange={e => setTempProfile({ ...tempProfile, full_name: e.target.value })}
+                disabled={!editingProfile}
+                placeholder="Full Name"
+              />
+              <Input value={tempProfile.email} disabled placeholder="Email" />
+              <Input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                disabled={!editingProfile}
+                placeholder="New Password"
+              />
+            </div>
+            {editingProfile ? (
+              <div className="flex gap-2 mt-2">
+                <Button onClick={handleProfileSave}>Save</Button>
+                <Button variant="outline" onClick={() => { setTempProfile(profile); setEditingProfile(false); setPassword(""); }}>Cancel</Button>
+              </div>
+            ) : (
+              <Button onClick={() => setEditingProfile(true)}>Edit Profile</Button>
+            )}
+          </div>
+        </Card>
+
+        {/* Physical Stats Card */}
+        <Card className="p-6">
+          <h2 className="text-2xl font-bold mb-4">Physical Stats</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            <Input type="number" value={physicalStats.age || ""} onChange={e => setPhysicalStats({ ...physicalStats, age: Number(e.target.value) })} disabled={!editingStats} placeholder="Age" />
+            <Input type="number" value={physicalStats.weight || ""} onChange={e => setPhysicalStats({ ...physicalStats, weight: Number(e.target.value) })} disabled={!editingStats} placeholder="Weight (kg)" />
+            <Input type="number" value={physicalStats.height || ""} onChange={e => setPhysicalStats({ ...physicalStats, height: Number(e.target.value) })} disabled={!editingStats} placeholder="Height (cm)" />
+            <Input type="number" value={physicalStats.waist || ""} onChange={e => setPhysicalStats({ ...physicalStats, waist: Number(e.target.value) })} disabled={!editingStats} placeholder="Waist (cm)" />
+            <Input type="number" value={physicalStats.hip || ""} onChange={e => setPhysicalStats({ ...physicalStats, hip: Number(e.target.value) })} disabled={!editingStats} placeholder="Hip (cm)" />
+            <Input type="number" value={physicalStats.bodyFat || ""} onChange={e => setPhysicalStats({ ...physicalStats, bodyFat: Number(e.target.value) })} disabled={!editingStats} placeholder="Body Fat (%)" />
+            <Input value={profile.bmi || ""} disabled placeholder={`BMI: ${bmiCategory}`} />
+            <Input value={waistHipRatio} disabled placeholder="Waist/Hip Ratio" />
+          </div>
+          {editingStats ? (
+            <div className="flex gap-2 mt-2">
+              <Button onClick={handleStatsSave}>Save</Button>
+              <Button variant="outline" onClick={() => { setPhysicalStats(profile); setEditingStats(false); }}>Cancel</Button>
+            </div>
+          ) : (
+            <Button onClick={() => setEditingStats(true)} className="mt-2">Edit Stats</Button>
+          )}
+        </Card>
       </main>
     </div>
-  );
-};
-
-const AccountStats = ({ userId }: { userId?: string }) => {
-  const { isDemoMode, demoWorkouts, demoMeals, demoPosts } = useDemoMode();
-  const [stats, setStats] = useState({ workouts: 0, meals: 0, posts: 0 });
-
-  useEffect(() => {
-    if (isDemoMode) {
-      setStats({
-        workouts: demoWorkouts.length,
-        meals: demoMeals.length,
-        posts: demoPosts.length
-      });
-      return;
-    }
-    
-    if (userId) {
-      fetchStats(userId);
-    }
-  }, [userId, isDemoMode, demoWorkouts, demoMeals, demoPosts]);
-
-  const fetchStats = async (userId: string) => {
-    const { data: workouts } = await supabase
-      .from("user_workouts")
-      .select("id", { count: 'exact' })
-      .eq("user_id", userId);
-
-    const { data: meals } = await supabase
-      .from("user_meals")
-      .select("id", { count: 'exact' })
-      .eq("user_id", userId);
-
-    const { data: posts } = await supabase
-      .from("community_posts")
-      .select("id", { count: 'exact' })
-      .eq("user_id", userId);
-
-    setStats({
-      workouts: workouts?.length || 0,
-      meals: meals?.length || 0,
-      posts: posts?.length || 0
-    });
-  };
-
-  return (
-    <Card className="p-6 mt-6">
-      <h2 className="text-xl font-bold mb-4">Account Stats</h2>
-      <div className="grid grid-cols-3 gap-4 text-center">
-        <div>
-          <p className="text-2xl font-bold text-primary">{stats.workouts}</p>
-          <p className="text-sm text-muted-foreground">Workouts</p>
-        </div>
-        <div>
-          <p className="text-2xl font-bold text-primary">{stats.meals}</p>
-          <p className="text-sm text-muted-foreground">Meals</p>
-        </div>
-        <div>
-          <p className="text-2xl font-bold text-primary">{stats.posts}</p>
-          <p className="text-sm text-muted-foreground">Posts</p>
-        </div>
-      </div>
-    </Card>
   );
 };
 
