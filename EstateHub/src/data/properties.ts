@@ -1,3 +1,9 @@
+import propertie1 from "../assets/property-1.jpg";
+import propertie2 from "../assets/property-2.jpg";
+import propertie3 from "../assets/property-3.jpg";
+
+
+
 export interface Property {
   id: number;
   title: string;
@@ -23,7 +29,7 @@ export const properties: Property[] = [
     bedrooms: 2,
     bathrooms: 2,
     area: 1200,
-    image: "/src/assets/property-1.jpg",
+    image: propertie1,
     featured: true,
     status: "sale",
     description: "Stunning modern apartment with panoramic city views, high-end finishes, and luxury amenities."
@@ -37,7 +43,7 @@ export const properties: Property[] = [
     bedrooms: 5,
     bathrooms: 4,
     area: 4500,
-    image: "/src/assets/property-2.jpg",
+    image: propertie2,
     featured: true,
     status: "sale",
     description: "Exquisite villa with swimming pool, landscaped gardens, and modern architecture in a prime location."
@@ -51,7 +57,7 @@ export const properties: Property[] = [
     bedrooms: 3,
     bathrooms: 3,
     area: 2800,
-    image: "/src/assets/property-3.jpg",
+    image: propertie3,
     featured: true,
     status: "sale",
     description: "Breathtaking penthouse with 360-degree views, premium finishes, and exclusive amenities."
@@ -65,7 +71,7 @@ export const properties: Property[] = [
     bedrooms: 3,
     bathrooms: 2,
     area: 1800,
-    image: "/src/assets/property-1.jpg",
+    image: propertie1,
     featured: false,
     status: "rent",
     description: "Beautiful family home with spacious backyard, modern kitchen, and great neighborhood."
@@ -79,7 +85,7 @@ export const properties: Property[] = [
     bedrooms: 1,
     bathrooms: 1,
     area: 750,
-    image: "/src/assets/property-2.jpg",
+    image: propertie2,
     featured: false,
     status: "rent",
     description: "Modern studio loft in the heart of downtown with exposed brick and high ceilings."
@@ -93,7 +99,7 @@ export const properties: Property[] = [
     bedrooms: 2,
     bathrooms: 2,
     area: 1400,
-    image: "/src/assets/property-3.jpg",
+    image: propertie3,
     featured: false,
     status: "sale",
     description: "Stunning waterfront condo with private balcony and marina access."
@@ -107,7 +113,7 @@ export const properties: Property[] = [
     bedrooms: 3,
     bathrooms: 2,
     area: 1600,
-    image: "/src/assets/property-1.jpg",
+    image: propertie1,
     featured: false,
     status: "rent",
     description: "Cozy cabin with breathtaking mountain views, perfect for nature lovers."
@@ -121,7 +127,7 @@ export const properties: Property[] = [
     bedrooms: 3,
     bathrooms: 2,
     area: 2000,
-    image: "/src/assets/property-2.jpg",
+    image: propertie2,
     featured: false,
     status: "sale",
     description: "Modern townhouse in historic neighborhood with rooftop terrace."
@@ -135,7 +141,7 @@ export const properties: Property[] = [
     bedrooms: 4,
     bathrooms: 4,
     area: 3500,
-    image: "/src/assets/property-3.jpg",
+    image: propertie3,
     featured: true,
     status: "sale",
     description: "Luxurious beachfront villa with private beach access and infinity pool."
@@ -149,7 +155,7 @@ export const properties: Property[] = [
     bedrooms: 2,
     bathrooms: 2,
     area: 1500,
-    image: "/src/assets/property-1.jpg",
+    image: propertie1,
     featured: false,
     status: "rent",
     description: "Industrial loft with high ceilings and exposed brick in trendy neighborhood."
@@ -163,7 +169,7 @@ export const properties: Property[] = [
     bedrooms: 4,
     bathrooms: 3,
     area: 2500,
-    image: "/src/assets/property-2.jpg",
+    image: propertie2,
     featured: false,
     status: "sale",
     description: "Spacious family home with large backyard and modern amenities."
@@ -177,7 +183,7 @@ export const properties: Property[] = [
     bedrooms: 4,
     bathrooms: 4,
     area: 3200,
-    image: "/src/assets/property-3.jpg",
+    image: propertie3,
     featured: true,
     status: "sale",
     description: "Spectacular penthouse with panoramic city views and world-class amenities."
