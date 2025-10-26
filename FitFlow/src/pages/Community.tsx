@@ -12,6 +12,9 @@ import {
   serverTimestamp,
   query,
   orderBy,
+  where,
+  getDoc,
+  getDocs,
 } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,11 +31,10 @@ import {
   ChevronRight,
   Edit,
   Bell,
+  Send,
 } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { motion, AnimatePresence } from "framer-motion";
-
-
 const CLOUD_NAME = "djnehcsju";
 const UPLOAD_PRESET = "ml_default";
 
@@ -85,6 +87,7 @@ export default function Community() {
   const [mediaPreviews, setMediaPreviews] = useState<string[]>([]);
   const [userId, setUserId] = useState<string>("");
   const [userName, setUserName] = useState<string>("");
+  const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [commentTexts, setCommentTexts] = useState<Record<string, string>>({});
   const [editPostTexts, setEditPostTexts] = useState<Record<string, string>>({});
@@ -128,6 +131,44 @@ export default function Community() {
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const usersRef = collection(db, "onlineUsers");
+    if (userId) {
+      const userDoc = doc(usersRef, userId);
+      updateDoc(userDoc, { active: true }).catch(async () => {
+        await addDoc(usersRef, { id: userId, name: userName, active: true });
+      });
+      const interval = setInterval(() => {
+        updateDoc(userDoc, { lastSeen: serverTimestamp() }).catch(() => { });
+      }, 60000);
+      return () => {
+        clearInterval(interval);
+        updateDoc(userDoc, { active: false }).catch(() => { });
+      };
+    }
+  }, [userId]);
+
+  // Delete all notifications from Firestore
+  const handleClearAll = async () => {
+    const user = auth.currentUser;
+    if (!user) return;
+    try {
+      const q = query(
+        collection(db, "notifications"),
+        where("toUserId", "==", user.uid)
+      );
+      const snapshot = await getDocs(q);  // <-- getDocs returns QuerySnapshot
+
+      snapshot.docs.forEach(async (docSnap) => {  // <-- docs is an array, forEach exists
+        await deleteDoc(doc(db, "notifications", docSnap.id));
+      });
+
+      setNotifications([]); // also clear local state
+    } catch (err) {
+      console.error("Error clearing notifications:", err);
+    }
+  };
 
   // Real-time notifications list (for current user) — simple feed of all notifications for demo
   useEffect(() => {
@@ -310,6 +351,9 @@ export default function Community() {
           toUserId: post.userId,
           text: emoji,
           createdAt: serverTimestamp(),
+          read: false,
+          postText: post.text.slice(0, 60), // short preview
+          senderPhotoURL: auth.currentUser?.photoURL || "",
         });
       }
     } catch (err) {
@@ -343,6 +387,9 @@ export default function Community() {
           toUserId: p.userId,
           text: txt,
           createdAt: serverTimestamp(),
+          read: false,
+          postText: p.text.slice(0, 60), // short preview
+          senderPhotoURL: auth.currentUser?.photoURL || "",
         });
       }
       setCommentTexts((prev) => ({ ...prev, [postId]: "" }));
@@ -402,7 +449,7 @@ export default function Community() {
 
   return (
     <div
-      className="min-h-screen bg-background text-foreground"
+      className="min-h-screen bg-background text-foreground p-20"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -410,40 +457,89 @@ export default function Community() {
       <Navigation />
 
       {/* Notification Button */}
-      <div className="fixed top-4 right-4 z-50">
+      <div className="fixed top-4 right-4 p-20">
         <Button variant="ghost" size="icon" onClick={() => setShowNotifPanel((s) => !s)}>
           <Bell size={20} />
         </Button>
       </div>
 
       {/* Notifications panel */}
-      {showNotifPanel && (
-        <div className="absolute right-4 top-16 w-80 max-h-96 overflow-y-auto bg-card/90 backdrop-blur-md border border-border rounded-lg p-4 space-y-2 z-50">
-          {notifications.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No notifications</p>
-          ) : (
-            notifications.map((n) => (
-              <div
-                key={n.id}
-                className="text-sm bg-muted/50 p-2 rounded-md cursor-pointer hover:bg-muted/70"
-                onClick={() => {
-                  const ref = postRefs.current[n.postId];
-                  if (ref) {
-                    ref.scrollIntoView({ behavior: "smooth", block: "center" });
-                    setHighlightedPost(n.postId);
-                    setTimeout(() => setHighlightedPost(null), 2000);
-                    setShowNotifPanel(false);
-                  }
-                }}
+      <AnimatePresence>
+        {showNotifPanel && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className="absolute right-4 top-16 w-96 bg-card/90 backdrop-blur-xl border border-border rounded-2xl shadow-2xl z-50 overflow-hidden"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-border/50">
+              <h3 className="font-semibold text-lg flex items-center gap-2">
+                <Bell className="text-yellow-500" size={20} />
+                Notifications
+              </h3>
+              <button
+                onClick={() => setShowNotifPanel(false)}
+                className="p-1 hover:bg-muted rounded-full transition"
+                title="Close"
               >
-                {n.type === "like" && <span><strong>{n.fromUser}</strong> liked your post</span>}
-                {n.type === "comment" && <span><strong>{n.fromUser}</strong> commented: "{n.text}"</span>}
-                {n.type === "emoji" && <span><strong>{n.fromUser}</strong> reacted {n.text}</span>}
-              </div>
-            ))
-          )}
-        </div>
-      )}
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Notification Content */}
+            <div className="max-h-80 overflow-y-auto scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+              {notifications.length === 0 ? (
+                <p className="text-center text-muted-foreground py-6">
+                  No new notifications 🎉
+                </p>
+              ) : (
+                notifications.map((n, idx) => (
+                  <motion.div
+                    key={idx}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: idx * 0.05 }}
+                    className={`p-3 border-b border-border/40 hover:bg-muted/40 transition flex flex-col gap-1 ${n.unread ? "bg-muted/60" : ""
+                      }`}
+                  >
+                    <p className="text-sm text-foreground">
+                      <span className="font-semibold">{n.fromUser}</span>
+                    </p>
+                    {n.text && (
+                      <p className="text-xs text-muted-foreground italic line-clamp-1">
+                        “{n.text}”
+                      </p>
+                    )}
+                    <span className="text-[11px] text-muted-foreground mt-1">
+                      {n.createdAt
+                        ? new Date(n.createdAt).toLocaleString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          day: "numeric",
+                          month: "short",
+                        })
+                        : "Just now"}
+                    </span>
+                  </motion.div>
+                ))
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-border/50 p-3 text-center">
+              <button
+                onClick={handleClearAll}
+                className="text-sm text-muted-foreground hover:text-foreground transition"
+              >
+                Clear All
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
 
       <div className="max-w-3xl mx-auto py-8 px-4 space-y-6">
         {/* Create Post */}
@@ -482,6 +578,14 @@ export default function Community() {
             </div>
           </CardContent>
         </Card>
+
+        {posts.length === 0 && !loading && (
+          <div className="space-y-4 animate-pulse">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="bg-muted/40 h-40 rounded-xl"></div>
+            ))}
+          </div>
+        )}
 
         {/* Posts feed */}
         <AnimatePresence>
@@ -557,7 +661,11 @@ export default function Community() {
                           <img
                             key={idx}
                             src={m.url}
-                            className="rounded-xl max-h-80 w-full object-cover cursor-pointer"
+                            alt="Post media"
+                            width={500}
+                            height={300}
+                            className="rounded-xl max-h-80 w-full object-cover cursor-pointer transition hover:scale-[1.01]"
+                            loading="lazy"
                             onClick={() => openPreview(post.mediaUrls!, idx)}
                           />
                         )
@@ -565,26 +673,31 @@ export default function Community() {
                     </div>
                   )}
 
-                  {/* Reactions */}
-                  <div className="flex gap-2 mb-2">
-                    <Button variant="ghost" size="sm" onClick={() => handleEmoji(post, "❤️")}>
-                      ❤️ {post.emojis?.filter((e) => e === "❤️").length || 0}
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleEmoji(post, "😂")}>
-                      😂 {post.emojis?.filter((e) => e === "😂").length || 0}
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleEmoji(post, "🔥")}>
-                      🔥 {post.emojis?.filter((e) => e === "🔥").length || 0}
-                    </Button>
-                  </div>
-
                   <div className="flex items-center gap-4 mb-2">
-                    <Button variant="ghost" size="sm" onClick={() => handleLike(post)}>
-                      <Heart className={`mr-1 ${post.likes?.includes(userId) ? "text-red-500 fill-red-500" : "text-gray-500"}`} />
-                      {post.likes?.length || 0}
-                    </Button>
+                    <motion.button
+                      whileTap={{ scale: 0.8 }}
+                      onClick={() => handleLike(post)}
+                      className="flex items-center gap-1 text-sm"
+                    >
+                      <Heart
+                        size={20}
+                        className={`transition-all ${post.likes?.includes(userId)
+                          ? "text-red-500 fill-red-500"
+                          : "text-gray-400 hover:text-red-400"
+                          }`}
+                      />
+                      <span>{post.likes?.length || 0}</span>
+                    </motion.button>
 
-                    <Button variant="ghost" size="sm" onClick={() => inputRef.current?.focus()}>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        const el = document.getElementById(`comment-input-${post.id}`);
+                        el?.focus();
+                      }}
+                    >
                       <MessageSquare className="mr-1 text-gray-500" />
                       {post.comments?.length || 0}
                     </Button>
@@ -620,9 +733,9 @@ export default function Community() {
                     ))}
 
                     <div className="flex gap-2 mt-2">
-                      <Input placeholder="Add a comment..." value={commentTexts[post.id] || ""} onChange={(e) => setCommentTexts((p) => ({ ...p, [post.id]: e.target.value }))} />
+                      <Input id={`comment-input-${post.id}`} placeholder="Add a comment..." value={commentTexts[post.id] || ""} onChange={(e) => setCommentTexts((p) => ({ ...p, [post.id]: e.target.value }))} />
                       <Button onClick={() => handleAddComment(post.id)} size="icon">
-                        <Upload size={16} />
+                        <Send size={16} />
                       </Button>
                     </div>
                   </div>
@@ -663,4 +776,3 @@ export default function Community() {
     </div>
   );
 }
-
